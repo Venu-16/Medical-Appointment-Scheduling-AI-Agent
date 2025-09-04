@@ -1,24 +1,20 @@
-# src/main.py
-import os
 from dotenv import load_dotenv
-from agents.scheduler_agent import build_scheduler_graph
+from agents.gemini_agent import build_gemini_agent
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     load_dotenv()
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_api_key:
-        raise ValueError("❌ GEMINI_API_KEY not found in environment.")
-
     print("✅ Environment variables loaded successfully.")
 
-    # Initialize scheduler graph
-    scheduler_graph = build_scheduler_graph()
-    app = scheduler_graph.compile()
+    agent = build_gemini_agent()
 
-    # Run a dummy test
-    result = app.invoke({"user_input": "Cancel Alice’s appointment"})
-    print("🤖 Agent Output:\n", result["response"])
-
+    while True:
+        q = input("\n🧑 User: ")
+        if q.lower() in ["exit", "quit"]:
+            break
+        response = agent.run(q)
+        print(f"\n🤖 Agent: {response}")
 
 if __name__ == "__main__":
     main()
