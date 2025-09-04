@@ -1,0 +1,7 @@
+pandas
+openpyxl
+langchain
+langgraph
+streamlit
+google-auth
+python-dotenv
