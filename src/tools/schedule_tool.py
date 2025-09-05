@@ -1,17 +1,12 @@
-from langchain.tools import tool
-from tools import calendar_tools as ct
+import pandas as pd
 
-@tool
-def list_appointments_tool() -> str:
-    """List all scheduled appointments."""
-    return ct.list_appointments()
+class ScheduleLookupTool:
+    def __init__(self, schedule_file="data/doctor_schedules.xlsx"):
+        self.schedule_file = schedule_file
 
-@tool
-def add_appointment_tool(patient: str, date: str, time: str, reason: str) -> str:
-    """Add a new appointment."""
-    return ct.add_appointment(patient, date, time, reason)
-
-@tool
-def cancel_appointment_tool(appointment_id: int = None, patient: str = None) -> str:
-    """Cancel an appointment by ID or patient name."""
-    return ct.cancel_appointment(appointment_id, patient)
+    def get_slots(self, doctor_id, date=None):
+        df = pd.read_excel(self.schedule_file, sheet_name="schedules")
+        df = df[(df["doctor_id"] == doctor_id) & (df["is_booked"] == False)]
+        if date:
+            df = df[df["date"] == date]
+        return df.to_dict(orient="records")
