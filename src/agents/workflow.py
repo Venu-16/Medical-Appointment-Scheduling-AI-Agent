@@ -1,149 +1,103 @@
-# src/agents/workflow.py
 from langgraph.graph import StateGraph, START, END
 from src.agents.state import AgentState
 from src.agents.tools_registry import TOOLS
-from langchain.chat_models import init_chat_model
-import re
-from datetime import datetime
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-import os
 
-load_dotenv()
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    api_key=os.getenv("GEMINI_API_KEY")
-)
-
-def extract_name_dob(user_input: str):
-    """
-    Very simple regex-based extractor for name and DOB.
-    Expected DOB format: YYYY-MM-DD or DD/MM/YYYY
-    """
-    name = None
-    dob = None
-
-    # Try to find DOB
-    dob_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", user_input)
-    if not dob_match:
-        dob_match = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", user_input)
-
-    if dob_match:
-        dob_str = dob_match.group(1)
-        try:
-            if "-" in dob_str:
-                dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-            else:
-                dob = datetime.strptime(dob_str, "%d/%m/%Y").date()
-        except Exception:
-            dob = None
-
-    # Naive way: assume the first capitalized words before "DOB" or standalone
-    name_match = re.search(r"(?:My name is|I am)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)", user_input)
-    if name_match:
-        name = name_match.group(1)
-
-    return name, dob
-
-
-# Node: Greeting
+# 1. Greeting
 def greeting_node(state: AgentState):
     msg = "Hello! Please provide your name, date of birth, and preferred doctor."
     state["messages"].append(msg)
     return state
 
-
-# Node: Patient Lookup
+# 2. Patient Lookup
 def patient_lookup_node(state: AgentState):
-    name, dob = extract_name_dob(state["user_input"])
-    result = TOOLS[0].run({"name": name, "dob": dob})
+    # ⚡ Demo: naive extraction (hardcoded example)
+    if "Rahul" in state["user_input"]:
+        name, dob = "Rahul Mehta", "1990-05-15"
+    else:
+        name, dob = "New Patient", None
+
+    result = TOOLS["patient_lookup"].lookup(name, dob)
     if result["status"] == "found":
         state["patient"] = result["patient"]
-        msg = f"Welcome back {result['patient']['full_name']}! Let's continue."
+        state["patient"]["is_returning"] = True
+        msg = f"Welcome back {result['patient']['full_name']}!"
     else:
-        # Create a new patient entry with placeholders
         state["patient"] = {
-            "full_name": name or "Unknown",
-            "dob": str(dob) if dob else None,
-            "preferred_doctor_id": None,
-            "patient_id": None,
-            "email": None,
-            "phone": None,
+            "full_name": name,
+            "dob": dob,
+            "email": "demo@example.com",
+            "phone": "9999999999",
+            "is_returning": False
         }
-        msg = "You seem to be a new patient. We'll register you."
+        msg = "You are a new patient. Let's continue with booking."
     state["messages"].append(msg)
     return state
 
-
-# Node: Scheduling
+# 3. Scheduling
 def scheduling_node(state: AgentState):
-    patient = state.get("patient", {})
-    doctor_id = patient.get("preferred_doctor_id")
-
-    if not doctor_id:
-        state["messages"].append(
-            "Please provide your preferred doctor ID before scheduling."
-        )
-        return state
-
-    slots = TOOLS[1].run({"doctor_id": doctor_id})
+    doctor_id = state["patient"].get("preferred_doctor_id", "D001")
+    slots = TOOLS["schedule_lookup"].get_slots(doctor_id)
     if slots:
-        slot = slots[0]  # Pick first available
-        appt = TOOLS[2].run({
-            "slot_id": slot["slot_id"],
-            "patient_id": patient.get("patient_id"),
-            "patient_name": patient.get("full_name")
-        })
+        slot = slots[0]  # pick first available
+        appt = TOOLS["book_slot"].book(
+            slot["slot_id"],
+            state["patient"].get("patient_id", "NEW001"),
+            state["patient"]["full_name"]
+        )
         state["appointment"] = appt["appointment"]
-        msg = f"Booked appointment for {patient.get('full_name')} at {slot['slot_start']}."
+
+        if not state["patient"].get("is_returning", True):
+            TOOLS["form_tool"].send_form(
+                state["patient"]["email"],
+                appt["appointment"]["appointment_id"]
+            )
+            msg = f"Appointment booked. Intake form sent to {state['patient']['email']}."
+        else:
+            msg = f"Appointment booked for {state['patient']['full_name']} at {slot['slot_start']}."
     else:
-        msg = "No slots available. Please try another day."
+        msg = "No slots available."
     state["messages"].append(msg)
     return state
 
-
-# Node: Insurance
+# 4. Insurance (only for new patients)
 def insurance_node(state: AgentState):
-    if not state.get("appointment"):
+    if state["patient"].get("is_returning", True):
         return state
+
     appt_id = state["appointment"]["appointment_id"]
-    insurance = {"carrier": "HealthPrime", "member_id": "AB12345", "group_number": "7890"}
-    result = TOOLS[3].run({"appointment_id": appt_id, **insurance})
-    state["insurance"] = insurance
-    state["messages"].append("Insurance details recorded.")
+    form_path = f"data/forms_returned/{appt_id}_filled.pdf"
+    result = TOOLS["insurance_extractor"].extract_from_pdf(form_path)
+
+    if result["status"] == "ok":
+        TOOLS["insurance_tool"].add_from_form(appt_id, result["insurance"])
+        state["insurance"] = result["insurance"]
+        state["messages"].append("Insurance details extracted from intake form.")
+    else:
+        state["messages"].append("Error extracting insurance info from form.")
     return state
 
-
-# Node: Confirmation
+# 5. Confirmation
 def confirmation_node(state: AgentState):
-    if not state.get("appointment"):
-        state["messages"].append("No appointment to confirm.")
-        return state
     appt_id = state["appointment"]["appointment_id"]
-    result = TOOLS[4].run({"appointment_id": appt_id})
+    result = TOOLS["confirmation_tool"].confirm(appt_id)
     state["messages"].append(result["message"])
     return state
 
-
-# Node: Reminders
+# 6. Reminders
 def reminder_node(state: AgentState):
-    if not state.get("appointment"):
-        state["messages"].append("No appointment found. Skipping reminders.")
-        return state
     appt_id = state["appointment"]["appointment_id"]
-    reminders = TOOLS[5].run({
-        "appointment_id": appt_id,
-        "patient_email": state["patient"].get("email"),
-        "patient_phone": state["patient"].get("phone")
-    })
+    reminders = TOOLS["reminder_tool"].create_reminders(
+        appt_id,
+        state["patient"]["email"],
+        state["patient"]["phone"]
+    )
     state["reminders"] = reminders
     state["messages"].append("Reminders scheduled.")
     return state
 
-
-# Build Graph
+# Build workflow graph
 graph = StateGraph(AgentState)
+
 graph.add_node("greeting", greeting_node)
 graph.add_node("lookup", patient_lookup_node)
 graph.add_node("scheduling", scheduling_node)

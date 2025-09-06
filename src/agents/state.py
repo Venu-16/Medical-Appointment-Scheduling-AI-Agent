@@ -1,4 +1,3 @@
-# src/agents/state.py
 from typing import TypedDict, Optional, List
 
 class AgentState(TypedDict):

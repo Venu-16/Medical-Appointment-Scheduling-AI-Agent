@@ -14,12 +14,12 @@ class BookSlotTool:
         if df.at[idx[0], "is_booked"]:
             return {"status": "error", "message": "Slot already booked"}
 
-        # Mark slot booked
+        # mark slot booked
         df.at[idx[0], "is_booked"] = True
         with pd.ExcelWriter(self.schedule_file, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
             df.to_excel(writer, sheet_name="schedules", index=False)
 
-        # Save appointment
+        # create appointment record
         appt = {
             "appointment_id": f"A_{slot_id}",
             "slot_id": slot_id,

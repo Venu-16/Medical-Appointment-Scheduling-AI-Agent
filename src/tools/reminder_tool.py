@@ -18,7 +18,11 @@ class ReminderTool:
 
         reminders = []
         base_time = datetime.now()
-        times = [base_time + timedelta(days=1), base_time + timedelta(hours=6), base_time + timedelta(hours=1)]
+        times = [
+            base_time + timedelta(days=1),
+            base_time + timedelta(hours=6),
+            base_time + timedelta(hours=1)
+        ]
         for i, t in enumerate(times, 1):
             reminders.append({
                 "appointment_id": appointment_id,
